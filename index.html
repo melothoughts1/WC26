@@ -116,6 +116,41 @@
   .status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--gold);vertical-align:middle;margin-right:5px}
   .status-dot.ok{background:#4a9d5b}
   .status-dot.err{background:#c0563c}
+
+  /* Golden Boot leaderboard — fixed to the bottom-right, unobtrusive card */
+  .boot{
+    position:fixed;right:18px;bottom:18px;z-index:40;
+    width:224px;max-width:calc(100vw - 36px);
+    background:rgba(255,255,255,.86);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+    border:1px solid rgba(42,40,35,.08);
+    border-radius:14px;
+    box-shadow:0 6px 20px rgba(0,0,0,.10);
+    padding:11px 13px 9px;
+    font-size:13px;
+  }
+  .boot h2{
+    margin:0 0 8px;
+    font-size:10.5px;letter-spacing:.9px;text-transform:uppercase;font-weight:800;
+    color:var(--gold);display:flex;align-items:center;gap:6px;
+  }
+  .boot h2 .ball{font-size:12px;filter:saturate(0)}
+  .boot ol{list-style:none;margin:0;padding:0}
+  .boot li{
+    display:flex;align-items:center;gap:8px;
+    padding:3px 0;line-height:1.2;
+  }
+  .boot li + li{border-top:1px solid rgba(42,40,35,.06)}
+  .boot .rank{width:14px;text-align:right;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+  .boot .bflag{width:18px;height:18px;border-radius:50%;object-fit:cover;background:#e8e6e0;flex:none;box-shadow:0 0 0 1px rgba(0,0,0,.06)}
+  .boot .name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+  .boot .goals{font-weight:800;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .boot li.lead .goals{color:var(--gold)}
+  .boot li.lead .bflag{box-shadow:0 0 0 2px var(--gold)}
+  .boot .empty{color:var(--muted);font-size:12px;padding:2px 0 3px}
+  @media (max-width:560px){
+    .boot{right:10px;bottom:10px;width:190px;font-size:12px}
+  }
 </style>
 </head>
 <body>
@@ -125,6 +160,8 @@
   </header>
 
   <div class="stage" id="stage" aria-label="World Cup 2026 knockout bracket"></div>
+
+  <aside class="boot" id="boot" aria-label="Golden Boot leaderboard" hidden></aside>
 
   <footer>
     <div><span class="status-dot" id="statusDot"></span><span id="status">Loading…</span></div>
@@ -288,11 +325,17 @@ function pt(radius, angDeg){
      kick,                    kickoff Date or null
      src }                    "espn" | "backup"                                */
 
+// Golden Boot tally from the last ESPN fetch: name -> {goals, team}. Rebuilt each
+// ESPN poll (freshest scorer data), read by renderScorers(). Own goals and
+// shootout conversions don't count toward the Golden Boot.
+let scorerTally = {};
+
 async function fetchESPN(){
   const res = await fetch(ESPN_URL, {cache:"no-store"});
   if (!res.ok) throw new Error("ESPN HTTP "+res.status);
   const data = await res.json();
   const out = {};
+  const tally = {};
   for (const ev of (data.events||[])){
     const num = EVENT_NUM[ev.id];
     if (num == null) continue;
@@ -302,6 +345,23 @@ async function fetchESPN(){
     const home = cs.find(c=>c.homeAway==="home") || cs[0];
     const away = cs.find(c=>c.homeAway==="away") || cs[1];
     if (!home || !away) continue;
+    // ESPN team id -> canonical team name, for crediting each goal to a flag
+    const teamById = {};
+    for (const c of cs){
+      const id = c.team && c.team.id;
+      if (id) teamById[id] = canon(c.team.displayName);
+    }
+    // Aggregate real goals (exclude own goals and shootout conversions)
+    for (const det of (comp.details||[])){
+      if (!det.scoringPlay || det.shootout || det.ownGoal) continue;
+      const a = (det.athletesInvolved||[])[0];
+      if (!a || !a.displayName) continue;
+      const name = a.displayName;
+      const teamId = (a.team && a.team.id) || null;
+      const rec2 = tally[name] || (tally[name] = {goals:0, team:null});
+      rec2.goals++;
+      if (!rec2.team && teamId && teamById[teamId]) rec2.team = teamById[teamId];
+    }
     const st = (ev.status && ev.status.type) || {};
     const detail = (st.description||"") + " " + (st.detail||"");
     const rec = {
@@ -325,6 +385,7 @@ async function fetchESPN(){
     }
     out[num] = rec;
   }
+  scorerTally = tally;
   return out;
 }
 
@@ -604,6 +665,32 @@ function render(model){
   prevWinners = newWinners;
 }
 
+/* Golden Boot leaderboard, from scorerTally. Top scorers by goals; ties broken
+   alphabetically. Hidden entirely until the first goal is scored. */
+const bootEl = document.getElementById("boot");
+const BOOT_MAX = 8;
+function renderScorers(){
+  const rows = Object.entries(scorerTally)
+    .map(([name,v])=>({name, goals:v.goals, team:v.team}))
+    .filter(r=>r.goals>0)
+    .sort((a,b)=> b.goals-a.goals || a.name.localeCompare(b.name));
+  if (!rows.length){ bootEl.hidden = true; bootEl.innerHTML = ""; return; }
+  bootEl.hidden = false;
+  const top = rows.slice(0, BOOT_MAX);
+  const lead = top[0].goals;
+  const items = top.map((r,i)=>{
+    const src = flagURL(r.team, "w40");
+    const flag = src
+      ? `<img class="bflag" src="${src}" alt="${escapeAttr(r.team||"")}" loading="lazy" onerror="this.removeAttribute('src')"/>`
+      : `<span class="bflag"></span>`;
+    return `<li class="${r.goals===lead?"lead":""}">`+
+           `<span class="rank">${i+1}</span>${flag}`+
+           `<span class="name" title="${escapeAttr(r.name)}">${escapeHTML(r.name)}</span>`+
+           `<span class="goals">${r.goals}</span></li>`;
+  }).join("");
+  bootEl.innerHTML = `<h2><span class="ball">⚽</span>Golden Boot</h2><ol>${items}</ol>`;
+}
+
 function roundName(num){
   const l = levelOf(num);
   return ["","Round of 32","Round of 16","Quarter-final","Semi-final","Final"][l];
@@ -689,6 +776,7 @@ async function tick(){
     const {feed, conflicts} = mergeFeeds(lastEspnFeed, lastBackupFeed);
     lastGoodAt = new Date();
     render(buildModel(feed));
+    renderScorers();
     let msg = "";
     if (!espnOk) msg = lastEspnFeed ? "ESPN stale, retrying" : "ESPN down · backup data";
     if (conflicts.length) msg += (msg?" · ":"") + "⚠ sources disagree: match "+conflicts.join(", ");
