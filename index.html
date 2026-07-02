@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Randall's World Cup 2026</title>
-<meta name="description" content="Randall's personal auto-updating circular bracket for the 2026 World Cup knockout stage — live results plus my own picks. Static, client-side, no backend." />
+<meta name="description" content="Randall's auto-updating circular bracket for the 2026 World Cup knockout stage. Static, client-side, no backend." />
 <style>
   :root{
     --bg:#f2ede1;
@@ -36,21 +36,10 @@
   header .sub{
     margin-top:4px;color:var(--muted);font-size:13px;
   }
-  /* My-picks scoreboard chip */
-  .tally{
-    display:inline-block;margin-top:8px;
-    background:#fff;border:1px solid #e0d9c8;border-radius:999px;
-    padding:4px 14px;font-size:13px;font-weight:600;color:var(--ink);
-    box-shadow:0 1px 2px rgba(0,0,0,.06);
-  }
-  .tally .ok{color:#4a7d3a;font-weight:800}
-  .tally .bad{color:var(--live);font-weight:800}
-  .tally .open{color:var(--muted);font-weight:600}
-
   /* Square responsive stage that holds the SVG (lines/dots/trophy) and the flag overlay */
   .stage{
     position:relative;
-    width:min(94vw, 82vh, 920px);
+    width:min(94vw, 86vh, 920px);
     aspect-ratio:1/1;
     margin:6px auto 4px;
   }
@@ -80,13 +69,6 @@
   .flag.champ{width:9%;border-color:var(--gold);box-shadow:0 0 0 3px var(--gold),0 2px 8px rgba(0,0,0,.3)}
   .flag.eliminated{filter:grayscale(.7) opacity(.78)}
   .flag.win{border-color:var(--gold)}
-  /* pickable = the next match is undecided, so clicking sets/toggles my pick */
-  .flag.pickable{cursor:pointer}
-  /* pick = a ghost flag advanced by MY prediction, not a real result */
-  .flag.pick{border:2px dashed var(--gold);opacity:.88;filter:saturate(.92)}
-  .flag.champ.pick{border-style:dashed;box-shadow:0 0 0 3px rgba(200,162,74,.45),0 2px 8px rgba(0,0,0,.2)}
-  /* mypick = a real flag I clicked, marking my choice for its next match */
-  .flag.mypick{border-color:var(--gold);border-style:dashed}
   .flag.pop{animation:pop .55s cubic-bezier(.2,1.5,.4,1)}
   @keyframes pop{0%{transform:translate(-50%,-50%) scale(.1);opacity:0}60%{transform:translate(-50%,-50%) scale(1.18)}100%{transform:translate(-50%,-50%) scale(1);opacity:1}}
   /* Subtle status cues for the two teams about to play a match.
@@ -124,9 +106,6 @@
     background:var(--live);margin-right:6px;vertical-align:middle;animation:livePulse 1.7s ease-in-out infinite}
   .tooltip .tt-soon{margin-top:2px;font-size:10px;letter-spacing:.7px;text-transform:uppercase;
     font-weight:700;color:var(--gold)}
-  .tooltip .tt-pick{margin-top:3px;font-size:11px;font-weight:700;color:var(--gold)}
-  .tooltip .tt-pick .hit{color:#8fd08a}
-  .tooltip .tt-pick .miss{color:#ff7a68}
 
   footer{
     color:var(--muted);font-size:12.5px;text-align:center;
@@ -136,51 +115,39 @@
   .status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--gold);vertical-align:middle;margin-right:5px}
   .status-dot.ok{background:#4a9d5b}
   .status-dot.err{background:#c0563c}
-  #clearPicks{
-    margin-top:6px;background:none;border:1px solid #d8d0bd;border-radius:999px;
-    color:var(--muted);font-size:11.5px;padding:3px 12px;cursor:pointer;
-  }
-  #clearPicks:hover{color:var(--ink);border-color:var(--muted)}
 </style>
 </head>
 <body>
   <header>
     <h1>Randall&rsquo;s World Cup 2026</h1>
-    <div class="sub">Live results fill in solid &middot; my picks advance in dashed gold &middot; click a flag to pick who wins its next match</div>
-    <div class="tally" id="tally">No picks yet — click a flag to start your bracket</div>
+    <div class="sub">Knockout bracket &middot; fills in as matches finish</div>
   </header>
 
-  <div class="stage" id="stage" aria-label="Randall's World Cup 2026 knockout bracket with personal picks"></div>
+  <div class="stage" id="stage" aria-label="World Cup 2026 knockout bracket"></div>
 
   <footer>
     <div><span class="status-dot" id="statusDot"></span><span id="status">Loading…</span></div>
-    <div style="margin-top:4px">Data: openfootball &middot; Flags: flagcdn &middot; Picks saved in this browser &middot; Design after Emilio Sansolini&rsquo;s radial bracket</div>
-    <button id="clearPicks" type="button">Clear my picks</button>
+    <div style="margin-top:4px">Data: openfootball &middot; Flags: flagcdn &middot; Static page, updates in your browser &middot; Design after Emilio Sansolini&rsquo;s radial bracket</div>
   </footer>
 
 <script>
 "use strict";
 /* ============================================================================
-   Randall's World Cup 2026 — personal auto-updating circular bracket
-   Based on the shadymccoy/WC26 radial bracket (design: Emilio Sansolini),
-   extended with a personal predictions layer:
+   Randall's World Cup 2026 — Auto-updating circular bracket
+   Pure static, client-side. Based on the shadymccoy/WC26 radial bracket
+   (design: Emilio Sansolini).
 
-     - Click any flag to pick that team to win its NEXT match; the pick shows
-       as a dashed-gold ghost flag one ring closer to the trophy. Click ghosts
-       to keep advancing a team all the way to champion.
-     - Click the same flag again to clear that pick. Picks that depend on it
-       vanish too (but silently revive if you re-pick the same team).
-     - Picks persist in localStorage. Real results always draw on top of
-       picks, and each finished match scores your pick ✓/✗ in the tally.
-
-   Pipeline: fetchResults() -> normalize() -> buildModel(feed, picks)
-             -> layout (polar) -> render() with a picks overlay.
+   Pipeline:
+     fetchResults()  -> raw matches (ONLY source-specific code)
+     normalize()     -> map num -> match
+     buildModel()    -> static skeleton + results overlay (winners propagate in)
+     layout()        -> polar (radius, angle) per node, bottom-up angle = mean
+     render()        -> SVG lines/dots/trophy + HTML circular flags, diff-animated
 ============================================================================ */
 
 /* ----------------------------- Config -------------------------------------- */
 const FEED_URL = "https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.json";
 const POLL_MS  = 120000; // 2 min (source lags anyway)
-const PICKS_KEY = "wc26-randall-picks";
 
 /* Team name -> ISO 3166-1 alpha-2 (flagcdn slug). The only hand-authored data.
    Must match the exact strings the feed uses. */
@@ -220,10 +187,10 @@ const CHILDREN = {
 };
 const R32_NUMS = [73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88];
 const R32SET = new Set(R32_NUMS);
-const ALL_NUMS = [...R32_NUMS, 89,90,91,92,93,94,95,96,97,98,99,100,101,102,104];
 
 /* Reverse of CHILDREN: match num -> its parent (the next-round match its winner
-   advances into). Built once from CHILDREN so the two never drift apart. */
+   advances into). R32 leaves point at their R16 match; the Final (ROOT) has no
+   parent. Built once from CHILDREN so the two never drift apart. */
 const PARENT = {};
 for (const [p, kids] of Object.entries(CHILDREN)){
   for (const c of kids) PARENT[c] = +p;
@@ -244,8 +211,8 @@ const CX = 500, CY = 500;
 const RADIUS = {0:430, 1:344, 2:260, 3:178, 4:98, 5:0};
 const STEP = 360/32; // angular slot per outer flag
 
-// 32 outer flags in tree DFS order (team1-subtree first): left semicircle =
-// first 16, right semicircle = last 16.
+// 32 outer flags in tree DFS order (team1-subtree first). This reproduces the
+// reference layout: left semicircle = first 16, right semicircle = last 16.
 function dfsFlags(num){
   if (R32SET.has(num)) return [{num,slot:0},{num,slot:1}];
   const [a,b] = CHILDREN[num];
@@ -310,67 +277,56 @@ function scoreLabel(score){
   return "";
 }
 
-/* ------------------------------ My picks ---------------------------------- */
-let picks = {}; // match num -> team name I predict to win that match
-try{ picks = JSON.parse(localStorage.getItem(PICKS_KEY) || "{}") || {}; }catch(e){ picks = {}; }
-function savePicks(){
-  try{ localStorage.setItem(PICKS_KEY, JSON.stringify(picks)); }catch(e){}
-}
-
-/* Build the resolved model. Two parallel views per node:
-     participantsAct / winnerAct — real results only (what actually happened)
-     participantsEff / winnerEff — real results, with MY picks filling the gaps
-   A stored pick only takes effect while its team is still a live effective
-   participant of that match; otherwise it is ignored (and scored as a miss
-   once the real result lands). */
+/* Build the resolved model: for every node compute its two participants and its
+   winner. Participants of an inner node = winners of its children (propagated
+   inward); a missing side stays null (TBD). */
 function buildModel(feed){
-  const memo = {};
-  function get(num){
-    if (memo[num]) return memo[num];
-    let pAct, pEff;
+  const node = {}; // num -> {participants:[t1,t2|null], winner:string|null, score, label}
+  const _w = {};
+  function participants(num){
     if (R32SET.has(num)){
       const m = feed[num] || {};
-      pAct = [m.team1 || null, m.team2 || null];
-      pEff = pAct.slice();
-    } else {
-      const [a,b] = CHILDREN[num];
-      const A = get(a), B = get(b);
-      pAct = [A.winnerAct, B.winnerAct];
-      pEff = [A.winnerEff, B.winnerEff];
+      return [m.team1 || null, m.team2 || null];
     }
-    const m = feed[num] || {};
-    const idx = winnerIndex(m.score);
-    const winnerAct = (idx!=null && pAct[idx]) ? pAct[idx] : null;
-    const rawPick = picks[num] || null;
-    const pickValid = (rawPick && !winnerAct && pEff.includes(rawPick)) ? rawPick : null;
-    const winnerEff = winnerAct || pickValid;
-    return (memo[num] = {
-      participantsAct:pAct, participantsEff:pEff,
-      winnerAct, winnerEff, rawPick, pickValid,
-      score:m.score, label:scoreLabel(m.score),
-      date:m.date||"", time:m.time||""
-    });
+    const [c1,c2] = CHILDREN[num];
+    return [winner(c1), winner(c2)];
   }
-  const node = {};
-  for (const num of ALL_NUMS) node[num] = get(num);
+  function winner(num){
+    if (num in _w) return _w[num];
+    const p = participants(num);
+    const sc = (feed[num]||{}).score;
+    const idx = winnerIndex(sc);
+    let w = null;
+    if (idx!=null && p[idx]) w = p[idx];
+    return (_w[num] = w);
+  }
+  for (const numStr of [...R32_NUMS, 89,90,91,92,93,94,95,96,97,98,99,100,101,102,104]){
+    const num = +numStr;
+    const p = participants(num);
+    const m = feed[num] || {};
+    const sc = m.score;
+    node[num] = { participants:p, winner:winner(num), score:sc, label:scoreLabel(sc),
+                  date:m.date||"", time:m.time||"" };
+  }
   return node;
 }
 
 /* ------------------------------ Rendering --------------------------------- */
 const stage = document.getElementById("stage");
-let prevWinners = {}; // num -> actual winner, for diff/pop animation
-let prevGhosts  = {}; // num -> picked team, ditto for pick ghosts
-let nowMs = Date.now();
-let lastFeed = null;  // last good normalized feed, so pick clicks re-render offline
+let prevWinners = {}; // num -> winner team, for diff/pop animation
+let nowMs = Date.now(); // one consistent clock per render, for live/soon highlighting
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-// Parse the feed's "12:00 UTC-4" style venue-local time into a real UTC instant.
+// Parse the feed's "12:00 UTC-4" / "20:00 UTC+5:30" (venue local time with an explicit
+// offset) plus the date into a real UTC instant. Returns a Date, or null if unparseable.
 function kickoffInstant(dateStr, timeStr){
   const dm = (dateStr||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   const tm = (timeStr||"").match(/^(\d{1,2}):(\d{2})(?:\s*UTC([+-])(\d{1,2})(?::(\d{2}))?)?/);
   if (!dm || !tm) return null;
+  // Offset defaults to UTC (Z) if the feed omits it; sign/hours/minutes otherwise.
   const sign = tm[3]==="-" ? -1 : 1;
   const offMin = tm[3] ? sign*(+tm[4]*60 + (+tm[5]||0)) : 0;
+  // UTC ms = wall-clock-as-UTC minus the venue offset.
   const asUTC = Date.UTC(+dm[1], +dm[2]-1, +dm[3], +tm[1], +tm[2]);
   const d = new Date(asUTC - offMin*60000);
   return isNaN(d.getTime()) ? null : d;
@@ -385,44 +341,38 @@ function kickoff(node){ // -> e.g. "28 Jun · 12:00 PDT" in the viewer's own tim
       : "";
     return t ? `${day} · ${t}` : day;
   }
+  // Fallback: show the raw feed strings if parsing ever fails.
   const m = node.date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   const day = m ? `${+m[3]} ${MONTHS[+m[2]-1]}` : node.date;
   return node.time ? `${day} · ${node.time}` : day;
 }
-// Highlight windows: "live" from kickoff until LIVE_MS after; "soon" SOON_MS ahead.
+// Highlight windows: a match is "live" from kickoff until this long after (covers
+// play + the feed's own lag before a final score lands); "soon" this far ahead.
 const LIVE_MS = 150*60000; // 2.5 h
 const SOON_MS = 120*60000; // 2 h
-// "live" | "soon" | "" — only for matches whose REAL participants are both set.
+// "live" | "soon" | "" for a match node, based on the viewer's clock. Only matches
+// with both teams known and no result yet can be highlighted.
 function matchStatus(node, now){
-  if (!node || node.label) return "";
-  if (!node.participantsAct[0] || !node.participantsAct[1]) return "";
+  if (!node || node.label) return "";               // already has a score -> finished
+  if (!node.participants[0] || !node.participants[1]) return ""; // teams not set yet
   const d = kickoffInstant(node.date, node.time);
   if (!d) return "";
-  const diff = d.getTime() - now;
+  const diff = d.getTime() - now;                   // ms until kickoff (<0 = under way)
   if (diff <= 0) return now < d.getTime() + LIVE_MS ? "live" : "";
   return diff <= SOON_MS ? "soon" : "";
 }
-// tooltip fields for a match node — real teams when known, my picks as "(my pick)"
+// tooltip fields for a match node (same match backs both its outer flags and its winner flag)
 function tipFor(model, num){
   const n = model[num];
-  const name = (i)=>{
-    if (n.participantsAct[i]) return n.participantsAct[i];
-    if (n.participantsEff[i]) return n.participantsEff[i]+" (my pick)";
-    return "TBD";
-  };
-  const teams = `${name(0)} vs ${name(1)}`;
-  let pick = "", pickmark = "";
-  if (n.rawPick){
-    pick = n.rawPick;
-    if (n.winnerAct) pickmark = (n.rawPick===n.winnerAct) ? "hit" : "miss";
-  }
+  const teams = `${n.participants[0]||"TBD"} vs ${n.participants[1]||"TBD"}`;
   return { round:roundName(num), teams, score:n.label, when:n.label?"":kickoff(n),
-           status:matchStatus(n, nowMs), pick, pickmark };
+           status:matchStatus(n, nowMs) };
 }
 // leading-space CSS class for a tip's live/soon state (""/" live"/" soon")
 function hlClass(tip){ return tip.status ? " "+tip.status : ""; }
 
 function connectorPath(num){
+  // child ring radius (outer) and this node's radius (inner)
   const lvl = levelOf(num);
   const Rc = RADIUS[lvl-1];
   const Rp = RADIUS[lvl];
@@ -433,6 +383,7 @@ function connectorPath(num){
   const A1 = pt(Rp, c1.ang), A2 = pt(Rp, c2.ang);
   const C1 = pt(Rc, c1.ang), C2 = pt(Rc, c2.ang);
   const P  = pt(Rp, ap);
+  // quadratic control so the curve passes exactly through the parent node P
   const ctrl = [2*P[0] - 0.5*(A1[0]+A2[0]), 2*P[1] - 0.5*(A1[1]+A2[1])];
   return `M${C1[0]} ${C1[1]} L${A1[0]} ${A1[1]} Q${ctrl[0]} ${ctrl[1]} ${A2[0]} ${A2[1]} L${C2[0]} ${C2[1]}`;
 }
@@ -445,6 +396,7 @@ function childFlagAngle(num, slot){
 }
 
 function trophySVG(){
+  // simple trophy glyph centered at (CX,CY)
   return `<g transform="translate(${CX},${CY})" fill="var(--line)">
     <path d="M-16,-26 h32 v8 a16,18 0 0 1 -32,0 z" />
     <path d="M-22,-24 a8,8 0 0 0 8,8 v-4 a4,4 0 0 1 -4,-4 z" />
@@ -457,63 +409,42 @@ function trophySVG(){
 
 function render(model){
   nowMs = Date.now();
-  const newWinners = {}, newGhosts = {};
-  const flags = []; // {x,y,team,cls,tip,next}
+  const newWinners = {};
+  const flags = []; // {x,y,team,cls,tip}
 
-  // Whether clicking a flag can set a pick: its next match exists and is undecided.
-  const pickableNext = (nextNum)=> nextNum!=null && model[nextNum] && !model[nextNum].winnerAct;
-
-  // 32 outer flags (always shown). Clicking one picks it to win its R32 match.
+  // 32 outer flags (always shown)
   FLAG_ORDER.forEach((f,i)=>{
-    const team = model[f.num].participantsAct[f.slot] || "";
+    const team = (model[f.num].participants[f.slot]) || "";
     if (!team) return;
     const [x,y] = pt(RADIUS[0], flagAngle(i));
-    const win = model[f.num].winnerAct;
-    const elim = win && win!==team;
+    const win = model[f.num].winner;
+    const elim = win && win!==team; // this team lost its R32 match
     const tip = tipFor(model,f.num);
-    let cls = "r0";
-    if (elim) cls += " eliminated";
-    else if (win===team) cls += " win";
-    if (pickableNext(f.num)){
-      cls += " pickable";
-      if (model[f.num].rawPick===team) cls += " mypick";
-    }
-    flags.push({x,y,team,cls:cls+hlClass(tip),tip,next:f.num});
+    flags.push({x,y,team,cls:"r0"+(elim?" eliminated":(win===team?" win":""))+hlClass(tip),
+                tip});
   });
 
-  // Connectors + dots / winner flags / pick ghosts for every match node
+  // Build connectors + dots/winner-flags for every match node
   let conns = "";
   let dots = "";
-  for (const num of ALL_NUMS){
+  const nodeNums = [...R32_NUMS, 89,90,91,92,93,94,95,96,97,98,99,100,101,102,104];
+  for (const num of nodeNums){
     const lvl = levelOf(num);
     if (lvl<=4) conns += `<path class="conn" d="${connectorPath(num)}"/>`;
     const ang = angleOf(num);
     if (num===ROOT) continue; // final handled at center
     const [x,y] = pt(RADIUS[lvl], ang);
-    const n = model[num];
-    const nextNum = PARENT[num];
-    if (n.winnerAct){
-      newWinners[num] = n.winnerAct;
-      const pop = (prevWinners[num]!==n.winnerAct) ? " pop" : "";
-      // Winner flag's tooltip describes where the team goes NEXT.
+    const w = model[num].winner;
+    if (w){
+      newWinners[num] = w;
+      const pop = (prevWinners[num]!==w) ? " pop" : "";
+      // A winner flag sits on the way toward the center, so its tooltip describes
+      // where the team goes NEXT (result if played, otherwise the schedule) rather
+      // than the match it already won. The match just won is still on the team's
+      // outer flag. PARENT[num] is the next-round match; fall back to num if absent.
+      const nextNum = PARENT[num];
       const tip = nextNum!=null ? tipFor(model,nextNum) : tipFor(model,num);
-      let cls = `r${lvl}${pop}`;
-      if (pickableNext(nextNum)){
-        cls += " pickable";
-        if (model[nextNum].rawPick===n.winnerAct) cls += " mypick";
-      }
-      flags.push({x,y,team:n.winnerAct,cls:cls+hlClass(tip),tip,next:nextNum});
-    } else if (n.pickValid){
-      // My predicted winner: dashed-gold ghost. Clicking advances it again.
-      newGhosts[num] = n.pickValid;
-      const pop = (prevGhosts[num]!==n.pickValid) ? " pop" : "";
-      const tip = nextNum!=null ? tipFor(model,nextNum) : tipFor(model,num);
-      let cls = `r${lvl} pick${pop}`;
-      if (pickableNext(nextNum)){
-        cls += " pickable";
-        if (model[nextNum].rawPick===n.pickValid) cls += " mypick";
-      }
-      flags.push({x,y,team:n.pickValid,cls,tip,next:nextNum});
+      flags.push({x,y,team:w,cls:`r${lvl}${pop}${hlClass(tip)}`, tip});
     } else {
       dots += `<circle class="dot" cx="${x}" cy="${y}" r="3.4"/>`;
     }
@@ -525,17 +456,11 @@ function render(model){
   let center = `<line class="center-line" x1="${CX}" y1="${CY}" x2="${sf1[0]}" y2="${sf1[1]}"/>
                 <line class="center-line" x1="${CX}" y1="${CY}" x2="${sf2[0]}" y2="${sf2[1]}"/>`;
   let champFlag = null;
-  if (finalNode.winnerAct){
-    newWinners[ROOT] = finalNode.winnerAct;
-    const pop = (prevWinners[ROOT]!==finalNode.winnerAct) ? " pop" : "";
+  if (finalNode.winner){
+    newWinners[ROOT] = finalNode.winner;
+    const pop = (prevWinners[ROOT]!==finalNode.winner) ? " pop" : "";
     const t = tipFor(model,ROOT); t.round = "Champion";
-    champFlag = {x:CX,y:CY,team:finalNode.winnerAct,cls:`champ${pop}`,tip:t,next:null};
-  } else if (finalNode.pickValid){
-    newGhosts[ROOT] = finalNode.pickValid;
-    const pop = (prevGhosts[ROOT]!==finalNode.pickValid) ? " pop" : "";
-    const t = tipFor(model,ROOT); t.round = "My champion";
-    // Clicking my champion ghost clears the final pick (data-self, no next).
-    champFlag = {x:CX,y:CY,team:finalNode.pickValid,cls:`champ pick pickable${pop}`,tip:t,next:null,self:ROOT};
+    champFlag = {x:CX,y:CY,team:finalNode.winner,cls:`champ${pop}`,tip:t};
   } else {
     center += trophySVG();
   }
@@ -548,43 +473,21 @@ function render(model){
     const src = flagURL(fl.team, w);
     const left = (fl.x/1000*100).toFixed(3);
     const top  = (fl.y/1000*100).toFixed(3);
-    const t = fl.tip || {round:"",teams:fl.team,score:"",when:"",pick:"",pickmark:""};
+    const t = fl.tip || {round:"",teams:fl.team,score:"",when:""};
     const data = `data-round="${escapeAttr(t.round)}" data-teams="${escapeAttr(t.teams)}" `+
                  `data-score="${escapeAttr(t.score||"")}" data-when="${escapeAttr(t.when||"")}" `+
-                 `data-status="${escapeAttr(t.status||"")}" data-pick="${escapeAttr(t.pick||"")}" `+
-                 `data-pickmark="${escapeAttr(t.pickmark||"")}" data-team="${escapeAttr(fl.team)}" `+
-                 `data-next="${fl.next!=null?fl.next:""}" data-self="${fl.self!=null?fl.self:""}"`;
+                 `data-status="${escapeAttr(t.status||"")}"`;
     if (src){
+      // on image error, fall back to a neutral circle so the bracket never gaps
       html += `<img class="flag ${fl.cls}" src="${src}" alt="${escapeAttr(fl.team)}" ${data} loading="lazy"
                  style="left:${left}%;top:${top}%" onerror="this.removeAttribute('src');this.style.background='#cfc9bd'"/>`;
     } else {
+      // unknown team string -> neutral placeholder so the bracket never blanks
       html += `<div class="flag ${fl.cls}" ${data} style="left:${left}%;top:${top}%;background:#cfc9bd"></div>`;
     }
   }
   stage.innerHTML = html;
   prevWinners = newWinners;
-  prevGhosts = newGhosts;
-  updateTally(model);
-}
-
-/* My-picks scoreboard: ✓ where the real result matched my pick, ✗ where it
-   didn't, open = picked but not yet decided. */
-function updateTally(model){
-  let hit=0, miss=0, open=0;
-  for (const num of ALL_NUMS){
-    const n = model[num];
-    if (!n.rawPick) continue;
-    if (n.winnerAct) (n.rawPick===n.winnerAct ? hit++ : miss++);
-    else open++;
-  }
-  const el = document.getElementById("tally");
-  if (hit+miss+open === 0){
-    el.innerHTML = "No picks yet — click a flag to start your bracket";
-  } else {
-    el.innerHTML = `My picks: <span class="ok">${hit} ✓</span> · `+
-                   `<span class="bad">${miss} ✗</span> · `+
-                   `<span class="open">${open} open</span>`;
-  }
 }
 
 function roundName(num){
@@ -606,24 +509,19 @@ function showTip(el){
   if (d.score){
     scoreHTML = `<div class="tt-score">${escapeHTML(d.score)}</div>`;
   } else if (d.status === "live"){
+    // Live: kickoff has passed but no final score has landed from the feed yet.
     scoreHTML = `<div class="tt-score live"><span class="live-dot"></span>Live</div>`
               + (d.when ? `<div class="tt-soon">Kicked off · ${escapeHTML(d.when)}</div>` : "");
   } else {
     scoreHTML = `<div class="tt-score pending">${escapeHTML(d.when || "Not played yet")}</div>`
               + (d.status === "soon" ? `<div class="tt-soon">Starting soon</div>` : "");
   }
-  let pickHTML = "";
-  if (d.pick){
-    const mark = d.pickmark==="hit" ? ` <span class="hit">✓</span>`
-               : d.pickmark==="miss" ? ` <span class="miss">✗</span>` : "";
-    pickHTML = `<div class="tt-pick">My pick: ${escapeHTML(d.pick)}${mark}</div>`;
-  }
   tipEl.innerHTML =
     (d.round ? `<div class="tt-round">${escapeHTML(d.round)}</div>` : "") +
-    `<div class="tt-teams">${escapeHTML(d.teams)}</div>` + scoreHTML + pickHTML;
+    `<div class="tt-teams">${escapeHTML(d.teams)}</div>` + scoreHTML;
   const r = el.getBoundingClientRect();
   const cx = Math.min(Math.max(r.left + r.width/2, 8), window.innerWidth - 8);
-  const flip = r.top < 110;
+  const flip = r.top < 90; // near top edge -> show below the flag
   tipEl.classList.toggle("below", flip);
   tipEl.style.left = cx + "px";
   tipEl.style.top  = (flip ? r.bottom : r.top) + "px";
@@ -639,43 +537,13 @@ stage.addEventListener("pointerover", e=>{
 stage.addEventListener("pointerout", e=>{
   if (e.target.closest(".flag") && e.pointerType!=="touch") hideTip();
 });
-
-/* Click = set/clear a pick when possible; otherwise toggle the tooltip
-   (so finished matches still show their result on tap). */
+// tap (touch): toggle, and dismiss when tapping elsewhere
 stage.addEventListener("click", e=>{
   const el = e.target.closest(".flag");
-  if (!el) return;
-  e.stopPropagation();
-  const team = el.dataset.team;
-  const next = el.dataset.next !== "" ? +el.dataset.next : null;
-  const self = el.dataset.self !== "" ? +el.dataset.self : null;
-  let changed = false;
-  if (self!=null){                       // my champion ghost -> clear final pick
-    delete picks[self]; changed = true;
-  } else if (team && next!=null && lastFeed){
-    const model = buildModel(lastFeed);
-    if (!model[next].winnerAct){         // toggle my pick for the next match
-      if (picks[next]===team) delete picks[next];
-      else picks[next] = team;
-      changed = true;
-    }
-  }
-  if (changed && lastFeed){
-    savePicks();
-    hideTip();
-    render(buildModel(lastFeed));
-  } else {
-    tipEl.classList.contains("on") ? hideTip() : showTip(el);
-  }
+  if (el){ e.stopPropagation(); tipEl.classList.contains("on") ? hideTip() : showTip(el); }
 });
 document.addEventListener("click", ()=>hideTip());
 window.addEventListener("scroll", hideTip, {passive:true});
-
-document.getElementById("clearPicks").addEventListener("click", ()=>{
-  picks = {};
-  savePicks();
-  if (lastFeed) render(buildModel(lastFeed));
-});
 
 /* ------------------------------- Update loop ------------------------------ */
 const statusEl = document.getElementById("status");
@@ -691,9 +559,9 @@ function stamp(ok, msg){
 async function tick(){
   try{
     const raw = await fetchResults();
-    lastFeed = normalize(raw);
+    const model = buildModel(normalize(raw));
     lastGoodAt = new Date();
-    render(buildModel(lastFeed));
+    render(model);
     stamp(true);
   }catch(err){
     // Never blank the bracket — keep last-good on screen, quiet retry
