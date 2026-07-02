@@ -325,17 +325,11 @@ function pt(radius, angDeg){
      kick,                    kickoff Date or null
      src }                    "espn" | "backup"                                */
 
-// Golden Boot tally from the last ESPN fetch: name -> {goals, team}. Rebuilt each
-// ESPN poll (freshest scorer data), read by renderScorers(). Own goals and
-// shootout conversions don't count toward the Golden Boot.
-let scorerTally = {};
-
 async function fetchESPN(){
   const res = await fetch(ESPN_URL, {cache:"no-store"});
   if (!res.ok) throw new Error("ESPN HTTP "+res.status);
   const data = await res.json();
   const out = {};
-  const tally = {};
   for (const ev of (data.events||[])){
     const num = EVENT_NUM[ev.id];
     if (num == null) continue;
@@ -345,23 +339,6 @@ async function fetchESPN(){
     const home = cs.find(c=>c.homeAway==="home") || cs[0];
     const away = cs.find(c=>c.homeAway==="away") || cs[1];
     if (!home || !away) continue;
-    // ESPN team id -> canonical team name, for crediting each goal to a flag
-    const teamById = {};
-    for (const c of cs){
-      const id = c.team && c.team.id;
-      if (id) teamById[id] = canon(c.team.displayName);
-    }
-    // Aggregate real goals (exclude own goals and shootout conversions)
-    for (const det of (comp.details||[])){
-      if (!det.scoringPlay || det.shootout || det.ownGoal) continue;
-      const a = (det.athletesInvolved||[])[0];
-      if (!a || !a.displayName) continue;
-      const name = a.displayName;
-      const teamId = (a.team && a.team.id) || null;
-      const rec2 = tally[name] || (tally[name] = {goals:0, team:null});
-      rec2.goals++;
-      if (!rec2.team && teamId && teamById[teamId]) rec2.team = teamById[teamId];
-    }
     const st = (ev.status && ev.status.type) || {};
     const detail = (st.description||"") + " " + (st.detail||"");
     const rec = {
@@ -385,8 +362,26 @@ async function fetchESPN(){
     }
     out[num] = rec;
   }
-  scorerTally = tally;
   return out;
+}
+
+/* Golden Boot: ESPN's own aggregated tournament leaders (full tournament, group
+   stage included) — no client-side tallying. CORS *, no key. goalsLeaders is
+   pre-sorted by ESPN; we keep their order. */
+const STATS_URL = "https://site.web.api.espn.com/apis/site/v2/sports/soccer/fifa.world/statistics?region=us&lang=en";
+let scorerList = []; // [{name, goals, team}] last-good, keyed for renderScorers()
+
+async function fetchScorers(){
+  const res = await fetch(STATS_URL, {cache:"no-store"});
+  if (!res.ok) throw new Error("stats HTTP "+res.status);
+  const data = await res.json();
+  const cat = (data.stats||[]).find(s=>s.name==="goalsLeaders");
+  if (!cat) throw new Error("no goalsLeaders category");
+  scorerList = (cat.leaders||[]).map(l=>({
+    name: (l.athlete && l.athlete.displayName) || "",
+    goals: Math.round(l.value||0),
+    team: canon(l.athlete && l.athlete.team && l.athlete.team.displayName)
+  })).filter(r=>r.name && r.goals>0);
 }
 
 // strict numeric parse: the backup API sends "null"/"" strings for absent values
@@ -665,15 +660,12 @@ function render(model){
   prevWinners = newWinners;
 }
 
-/* Golden Boot leaderboard, from scorerTally. Top scorers by goals; ties broken
-   alphabetically. Hidden entirely until the first goal is scored. */
+/* Golden Boot leaderboard, from scorerList (ESPN's pre-aggregated tournament
+   goals leaders, already sorted). Hidden until data arrives. */
 const bootEl = document.getElementById("boot");
 const BOOT_MAX = 8;
 function renderScorers(){
-  const rows = Object.entries(scorerTally)
-    .map(([name,v])=>({name, goals:v.goals, team:v.team}))
-    .filter(r=>r.goals>0)
-    .sort((a,b)=> b.goals-a.goals || a.name.localeCompare(b.name));
+  const rows = scorerList;
   if (!rows.length){ bootEl.hidden = true; bootEl.innerHTML = ""; return; }
   bootEl.hidden = false;
   const top = rows.slice(0, BOOT_MAX);
@@ -771,6 +763,12 @@ async function tick(){
   if (tickN===1 || tickN % BACKUP_EVERY === 0 || !espnOk){
     try{ lastBackupFeed = await fetchBackup(); }
     catch(err){ console.warn("backup fetch failed:", err); }
+  }
+  // Golden Boot leaders: aggregate data, same relaxed cadence as the backup.
+  // Non-fatal — the card just keeps showing last-good numbers.
+  if (tickN===1 || tickN % BACKUP_EVERY === 0){
+    try{ await fetchScorers(); }
+    catch(err){ console.warn("scorers fetch failed:", err); }
   }
   if (lastEspnFeed || lastBackupFeed){
     const {feed, conflicts} = mergeFeeds(lastEspnFeed, lastBackupFeed);
