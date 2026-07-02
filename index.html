@@ -45,9 +45,9 @@
     margin:6px auto 4px;
   }
   .stage svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
-  .conn{fill:none;stroke:var(--line);stroke-width:2.2;stroke-linejoin:round;stroke-linecap:round}
-  .dot{fill:var(--line)}
-  .center-line{stroke:var(--line);stroke-width:2.2}
+  .conn{fill:none;stroke:var(--line);stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round;opacity:.55}
+  .dot{fill:var(--bg);stroke:var(--line);stroke-width:1.6}
+  .center-line{stroke:var(--line);stroke-width:1.6;stroke-linecap:round;opacity:.55}
 
   /* Flags are HTML imgs positioned over the SVG so circular clipping is trivial */
   .flag{
@@ -475,20 +475,26 @@ function tipFor(model, num){
 function hlClass(tip){ return tip.status ? " "+tip.status : ""; }
 
 function connectorPath(num){
-  // child ring radius (outer) and this node's radius (inner)
+  // Smooth radial fork: each child flows inward to the parent node along a single
+  // cubic. Tangents at both ends point along the radius, so every line leaves a
+  // node aimed straight at the trophy and the whole tree fans cleanly to center.
   const lvl = levelOf(num);
-  const Rc = RADIUS[lvl-1];
-  const Rp = RADIUS[lvl];
-  const [c1,c2] = R32SET.has(num)
-    ? [{ang:childFlagAngle(num,0)},{ang:childFlagAngle(num,1)}]
-    : [{ang:angleOf(CHILDREN[num][0])},{ang:angleOf(CHILDREN[num][1])}];
+  const Rc = RADIUS[lvl-1]; // children live on the outer ring
+  const Rp = RADIUS[lvl];   // parent node on the inner ring
+  const [a1,a2] = R32SET.has(num)
+    ? [childFlagAngle(num,0), childFlagAngle(num,1)]
+    : [angleOf(CHILDREN[num][0]), angleOf(CHILDREN[num][1])];
   const ap = angleOf(num);
-  const A1 = pt(Rp, c1.ang), A2 = pt(Rp, c2.ang);
-  const C1 = pt(Rc, c1.ang), C2 = pt(Rc, c2.ang);
-  const P  = pt(Rp, ap);
-  // quadratic control so the curve passes exactly through the parent node P
-  const ctrl = [2*P[0] - 0.5*(A1[0]+A2[0]), 2*P[1] - 0.5*(A1[1]+A2[1])];
-  return `M${C1[0]} ${C1[1]} L${A1[0]} ${A1[1]} Q${ctrl[0]} ${ctrl[1]} ${A2[0]} ${A2[1]} L${C2[0]} ${C2[1]}`;
+  // one child->parent cubic, radial tangents at each end (t = handle length)
+  function limb(childAng){
+    const C = pt(Rc, childAng);       // child anchor (outer)
+    const P = pt(Rp, ap);             // parent node (inner)
+    const t = (Rc - Rp) * 0.4;        // handle length as a share of the ring gap
+    const h1 = pt(Rc - t, childAng);  // pull inward from child, still on child's spoke
+    const h2 = pt(Rp + t, ap);        // pull outward from parent, on parent's spoke
+    return `M${C[0]} ${C[1]} C${h1[0]} ${h1[1]} ${h2[0]} ${h2[1]} ${P[0]} ${P[1]}`;
+  }
+  return limb(a1) + limb(a2);
 }
 // angle of one of a R32 node's two outer flags (slot 0/1)
 function childFlagAngle(num, slot){
@@ -548,15 +554,21 @@ function render(model){
       const tip = nextNum!=null ? tipFor(model,nextNum) : tipFor(model,num);
       flags.push({x,y,team:w,cls:`r${lvl} win${pop}${hlClass(tip)}`, tip});
     } else {
-      dots += `<circle class="dot" cx="${x}" cy="${y}" r="3.4"/>`;
+      dots += `<circle class="dot" cx="${x}" cy="${y}" r="4"/>`;
     }
   }
 
   // Final / center
   const finalNode = model[ROOT];
-  const sf1 = pt(RADIUS[4], angleOf(101)), sf2 = pt(RADIUS[4], angleOf(102));
-  let center = `<line class="center-line" x1="${CX}" y1="${CY}" x2="${sf1[0]}" y2="${sf1[1]}"/>
-                <line class="center-line" x1="${CX}" y1="${CY}" x2="${sf2[0]}" y2="${sf2[1]}"/>`;
+  // Semifinal winners flow into the trophy along the same smooth radial cubic as
+  // the rest of the tree (parent angle = 0 at the center).
+  function centerLimb(childNum){
+    const ca = angleOf(childNum), Rc = RADIUS[4];
+    const C = pt(Rc, ca), t = Rc*0.4;
+    const h1 = pt(Rc - t, ca);
+    return `<path class="conn" d="M${C[0]} ${C[1]} C${h1[0]} ${h1[1]} ${CX} ${CY} ${CX} ${CY}"/>`;
+  }
+  let center = centerLimb(101) + centerLimb(102);
   let champFlag = null;
   if (finalNode.winner){
     newWinners[ROOT] = finalNode.winner;
