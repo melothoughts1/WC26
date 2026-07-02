@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Randall's World Cup 2026</title>
+<meta name="description" content="Randall's personal auto-updating circular bracket for the 2026 World Cup knockout stage — live results plus my own picks. Static, client-side, no backend." />
+<style>
+  :root{
+    --bg:#f2ede1;
+    --ink:#1c1b18;
+    --line:#2a2823;
+    --muted:#9a948a;
+    --gold:#c8a24a;
+    --live:#d1493a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    display:flex;flex-direction:column;align-items:center;
+    min-height:100%;
+  }
+  header{
+    text-align:center;
+    padding:18px 12px 4px;
+  }
+  header h1{
+    margin:0;
+    font-size:clamp(20px,3.4vw,34px);
+    font-weight:800;
+    letter-spacing:.2px;
+  }
+  header .sub{
+    margin-top:4px;color:var(--muted);font-size:13px;
+  }
+  /* My-picks scoreboard chip */
+  .tally{
+    display:inline-block;margin-top:8px;
+    background:#fff;border:1px solid #e0d9c8;border-radius:999px;
+    padding:4px 14px;font-size:13px;font-weight:600;color:var(--ink);
+    box-shadow:0 1px 2px rgba(0,0,0,.06);
+  }
+  .tally .ok{color:#4a7d3a;font-weight:800}
+  .tally .bad{color:var(--live);font-weight:800}
+  .tally .open{color:var(--muted);font-weight:600}
+
+  /* Square responsive stage that holds the SVG (lines/dots/trophy) and the flag overlay */
+  .stage{
+    position:relative;
+    width:min(94vw, 82vh, 920px);
+    aspect-ratio:1/1;
+    margin:6px auto 4px;
+  }
+  .stage svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+  .conn{fill:none;stroke:var(--line);stroke-width:2.2;stroke-linejoin:round;stroke-linecap:round}
+  .dot{fill:var(--line)}
+  .center-line{stroke:var(--line);stroke-width:2.2}
+
+  /* Flags are HTML imgs positioned over the SVG so circular clipping is trivial */
+  .flag{
+    position:absolute;
+    transform:translate(-50%,-50%);
+    border-radius:50%;
+    object-fit:cover;
+    background:#fff;
+    box-shadow:0 1px 3px rgba(0,0,0,.18);
+    border:2px solid #fff;
+    aspect-ratio:1/1;
+    cursor:default;
+    transition:width .25s ease, height .25s ease;
+  }
+  .flag.r0{width:6.6%}
+  .flag.r1{width:5.7%}
+  .flag.r2{width:5.2%}
+  .flag.r3{width:5.0%}
+  .flag.r4{width:5.0%}
+  .flag.champ{width:9%;border-color:var(--gold);box-shadow:0 0 0 3px var(--gold),0 2px 8px rgba(0,0,0,.3)}
+  .flag.eliminated{filter:grayscale(.7) opacity(.78)}
+  .flag.win{border-color:var(--gold)}
+  /* pickable = the next match is undecided, so clicking sets/toggles my pick */
+  .flag.pickable{cursor:pointer}
+  /* pick = a ghost flag advanced by MY prediction, not a real result */
+  .flag.pick{border:2px dashed var(--gold);opacity:.88;filter:saturate(.92)}
+  .flag.champ.pick{border-style:dashed;box-shadow:0 0 0 3px rgba(200,162,74,.45),0 2px 8px rgba(0,0,0,.2)}
+  /* mypick = a real flag I clicked, marking my choice for its next match */
+  .flag.mypick{border-color:var(--gold);border-style:dashed}
+  .flag.pop{animation:pop .55s cubic-bezier(.2,1.5,.4,1)}
+  @keyframes pop{0%{transform:translate(-50%,-50%) scale(.1);opacity:0}60%{transform:translate(-50%,-50%) scale(1.18)}100%{transform:translate(-50%,-50%) scale(1);opacity:1}}
+  /* Subtle status cues for the two teams about to play a match.
+     .soon = static soft gold ring; .live = gently pulsing red halo. */
+  .flag.soon{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold),0 1px 3px rgba(0,0,0,.18)}
+  .flag.live{border-color:var(--live);animation:livePulse 1.7s ease-in-out infinite}
+  @keyframes livePulse{
+    0%,100%{box-shadow:0 0 0 2px var(--live),0 0 5px 1px rgba(209,73,58,.30),0 1px 3px rgba(0,0,0,.18)}
+    50%{box-shadow:0 0 0 3px var(--live),0 0 12px 4px rgba(209,73,58,.55),0 1px 3px rgba(0,0,0,.18)}
+  }
+
+  /* Custom hover/tap tooltip showing the match score */
+  .tooltip{
+    position:fixed;z-index:50;pointer-events:none;
+    background:#1c1b18;color:#f2ede1;
+    padding:7px 12px;border-radius:10px;
+    font-size:13px;line-height:1.35;text-align:center;white-space:nowrap;
+    box-shadow:0 6px 18px rgba(0,0,0,.30);
+    opacity:0;transform:translate(-50%,-100%) translateY(-6px) scale(.96);
+    transition:opacity .12s ease, transform .12s ease;
+  }
+  .tooltip.on{opacity:1;transform:translate(-50%,-100%) translateY(-10px) scale(1)}
+  .tooltip::after{content:"";position:absolute;left:50%;bottom:-5px;transform:translateX(-50%) rotate(45deg);
+    width:10px;height:10px;background:#1c1b18;border-radius:2px}
+  /* flipped below the flag (for flags near the top edge) */
+  .tooltip.below{transform:translate(-50%,0) translateY(6px) scale(.96)}
+  .tooltip.below.on{transform:translate(-50%,0) translateY(10px) scale(1)}
+  .tooltip.below::after{top:-5px;bottom:auto}
+  .tooltip .tt-round{font-size:10px;letter-spacing:.7px;text-transform:uppercase;font-weight:700;color:var(--gold)}
+  .tooltip .tt-teams{font-weight:600;margin-top:2px}
+  .tooltip .tt-score{margin-top:3px;font-size:16px;font-weight:800}
+  .tooltip .tt-score.pending{font-size:12px;font-weight:500;color:#cfc9bd}
+  .tooltip .tt-score.live{color:#ff7a68}
+  .tooltip .tt-score.live .live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;
+    background:var(--live);margin-right:6px;vertical-align:middle;animation:livePulse 1.7s ease-in-out infinite}
+  .tooltip .tt-soon{margin-top:2px;font-size:10px;letter-spacing:.7px;text-transform:uppercase;
+    font-weight:700;color:var(--gold)}
+  .tooltip .tt-pick{margin-top:3px;font-size:11px;font-weight:700;color:var(--gold)}
+  .tooltip .tt-pick .hit{color:#8fd08a}
+  .tooltip .tt-pick .miss{color:#ff7a68}
+
+  footer{
+    color:var(--muted);font-size:12.5px;text-align:center;
+    padding:2px 12px 22px;line-height:1.5;
+  }
+  footer a{color:var(--muted)}
+  .status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--gold);vertical-align:middle;margin-right:5px}
+  .status-dot.ok{background:#4a9d5b}
+  .status-dot.err{background:#c0563c}
+  #clearPicks{
+    margin-top:6px;background:none;border:1px solid #d8d0bd;border-radius:999px;
+    color:var(--muted);font-size:11.5px;padding:3px 12px;cursor:pointer;
+  }
+  #clearPicks:hover{color:var(--ink);border-color:var(--muted)}
+</style>
+</head>
+<body>
+  <header>
+    <h1>Randall&rsquo;s World Cup 2026</h1>
+    <div class="sub">Live results fill in solid &middot; my picks advance in dashed gold &middot; click a flag to pick who wins its next match</div>
+    <div class="tally" id="tally">No picks yet — click a flag to start your bracket</div>
+  </header>
+
+  <div class="stage" id="stage" aria-label="Randall's World Cup 2026 knockout bracket with personal picks"></div>
+
+  <footer>
+    <div><span class="status-dot" id="statusDot"></span><span id="status">Loading…</span></div>
+    <div style="margin-top:4px">Data: openfootball &middot; Flags: flagcdn &middot; Picks saved in this browser &middot; Design after Emilio Sansolini&rsquo;s radial bracket</div>
+    <button id="clearPicks" type="button">Clear my picks</button>
+  </footer>
+
+<script>
+"use strict";
+/* ============================================================================
+   Randall's World Cup 2026 — personal auto-updating circular bracket
+   Based on the shadymccoy/WC26 radial bracket (design: Emilio Sansolini),
+   extended with a personal predictions layer:
+
+     - Click any flag to pick that team to win its NEXT match; the pick shows
+       as a dashed-gold ghost flag one ring closer to the trophy. Click ghosts
+       to keep advancing a team all the way to champion.
+     - Click the same flag again to clear that pick. Picks that depend on it
+       vanish too (but silently revive if you re-pick the same team).
+     - Picks persist in localStorage. Real results always draw on top of
+       picks, and each finished match scores your pick ✓/✗ in the tally.
+
+   Pipeline: fetchResults() -> normalize() -> buildModel(feed, picks)
+             -> layout (polar) -> render() with a picks overlay.
+============================================================================ */
+
+/* ----------------------------- Config -------------------------------------- */
+const FEED_URL = "https://raw.githubusercontent.com/openfootball/worldcup.json/master/2026/worldcup.json";
+const POLL_MS  = 120000; // 2 min (source lags anyway)
+const PICKS_KEY = "wc26-randall-picks";
+
+/* Team name -> ISO 3166-1 alpha-2 (flagcdn slug). The only hand-authored data.
+   Must match the exact strings the feed uses. */
+const ISO = {
+  "South Africa":"za","Canada":"ca","Germany":"de","Paraguay":"py",
+  "Netherlands":"nl","Morocco":"ma","Brazil":"br","Japan":"jp",
+  "France":"fr","Sweden":"se","Ivory Coast":"ci","Norway":"no",
+  "Mexico":"mx","Ecuador":"ec","England":"gb-eng","DR Congo":"cd",
+  "USA":"us","Bosnia & Herzegovina":"ba","Belgium":"be","Senegal":"sn",
+  "Portugal":"pt","Croatia":"hr","Spain":"es","Austria":"at",
+  "Switzerland":"ch","Algeria":"dz","Argentina":"ar","Cape Verde":"cv",
+  "Colombia":"co","Ghana":"gh","Australia":"au","Egypt":"eg",
+  // a few likely-alternates so a feed rename won't blank a flag
+  "United States":"us","Côte d'Ivoire":"ci","Cabo Verde":"cv",
+  "IR Iran":"ir","Iran":"ir","Korea Republic":"kr","South Korea":"kr",
+  "Czech Republic":"cz","Czechia":"cz","Turkey":"tr","Türkiye":"tr",
+  "Scotland":"gb-sct","Haiti":"ht","Curaçao":"cw","Curacao":"cw",
+  "Tunisia":"tn","New Zealand":"nz","Saudi Arabia":"sa","Uruguay":"uy",
+  "Iraq":"iq","Jordan":"jo","Uzbekistan":"uz","Panama":"pa","Qatar":"qa"
+};
+function flagURL(team, w){ // w = flagcdn width bucket
+  const iso = ISO[team];
+  return iso ? `https://flagcdn.com/${w}/${iso}.png` : "";
+}
+
+/* ---- Static bracket skeleton: match num -> [childNum, childNum].
+   Fixed and known in advance; results only overlay on top. R32 (73–88) are
+   the leaves whose two participants are the team flags. (Match 103, the
+   third-place play-off, is intentionally outside the radial tree.) */
+const ROOT = 104;
+const CHILDREN = {
+  89:[74,77], 90:[73,75], 91:[76,78], 92:[79,80],
+  93:[83,84], 94:[81,82], 95:[86,88], 96:[85,87],
+  97:[89,90], 98:[93,94], 99:[91,92], 100:[95,96],
+  101:[97,98], 102:[99,100],
+  104:[101,102]
+};
+const R32_NUMS = [73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88];
+const R32SET = new Set(R32_NUMS);
+const ALL_NUMS = [...R32_NUMS, 89,90,91,92,93,94,95,96,97,98,99,100,101,102,104];
+
+/* Reverse of CHILDREN: match num -> its parent (the next-round match its winner
+   advances into). Built once from CHILDREN so the two never drift apart. */
+const PARENT = {};
+for (const [p, kids] of Object.entries(CHILDREN)){
+  for (const c of kids) PARENT[c] = +p;
+}
+
+/* Ring level: R32 match node = 1 … Final = 5 (center). Flags live at level 0. */
+function levelOf(num){
+  if (R32SET.has(num)) return 1;
+  if (num>=89 && num<=96) return 2;
+  if (num>=97 && num<=100) return 3;
+  if (num>=101 && num<=102) return 4;
+  return 5; // final
+}
+
+/* --------------------------- Geometry -------------------------------------- */
+const CX = 500, CY = 500;
+// radius per ring level (viewBox units). 0 = outer flags … 5 = center.
+const RADIUS = {0:430, 1:344, 2:260, 3:178, 4:98, 5:0};
+const STEP = 360/32; // angular slot per outer flag
+
+// 32 outer flags in tree DFS order (team1-subtree first): left semicircle =
+// first 16, right semicircle = last 16.
+function dfsFlags(num){
+  if (R32SET.has(num)) return [{num,slot:0},{num,slot:1}];
+  const [a,b] = CHILDREN[num];
+  return dfsFlags(a).concat(dfsFlags(b));
+}
+const FLAG_ORDER = dfsFlags(ROOT); // length 32
+
+// flag index -> angle (deg, measured from 12 o'clock, clockwise positive).
+function flagAngle(i){
+  return (i<16) ? -(i+0.5)*STEP : ((i-16)+0.5)*STEP;
+}
+// match num -> angle (deg). Leaf = mean of its two flags; inner = mean of children.
+const _angleMemo = {};
+function angleOf(num){
+  if (num in _angleMemo) return _angleMemo[num];
+  let a;
+  if (R32SET.has(num)){
+    const idx = [];
+    FLAG_ORDER.forEach((f,i)=>{ if(f.num===num) idx.push(i); });
+    a = (flagAngle(idx[0]) + flagAngle(idx[1]))/2;
+  } else {
+    const [c1,c2] = CHILDREN[num];
+    a = (angleOf(c1) + angleOf(c2))/2;
+  }
+  return (_angleMemo[num] = a);
+}
+// polar (radius, angleDeg) -> screen point
+function pt(radius, angDeg){
+  const r = angDeg*Math.PI/180;
+  return [CX + radius*Math.sin(r), CY - radius*Math.cos(r)];
+}
+
+/* --------------------------- Data adapter --------------------------------- */
+async function fetchResults(){
+  const res = await fetch(FEED_URL, {cache:"no-store"});
+  if (!res.ok) throw new Error("HTTP "+res.status);
+  const data = await res.json();
+  return data.matches || [];
+}
+// num -> raw match
+function normalize(matches){
+  const map = {};
+  for (const m of matches){ if (m && m.num!=null) map[m.num] = m; }
+  return map;
+}
+
+// Winner index (0=team1,1=team2) from a score, precedence p -> et -> ft. null if undecided.
+function winnerIndex(score){
+  if (!score) return null;
+  const s = score.p || score.et || score.ft;
+  if (!s || s.length<2 || s[0]===s[1]) return null;
+  return s[0] > s[1] ? 0 : 1;
+}
+function scoreLabel(score){
+  if (!score) return "";
+  if (score.p){
+    const base = score.et || score.ft || score.p;
+    return `${base[0]}–${base[1]} (${score.p[0]}–${score.p[1]} pens)`;
+  }
+  if (score.et) return `${score.et[0]}–${score.et[1]} a.e.t.`;
+  if (score.ft) return `${score.ft[0]}–${score.ft[1]}`;
+  return "";
+}
+
+/* ------------------------------ My picks ---------------------------------- */
+let picks = {}; // match num -> team name I predict to win that match
+try{ picks = JSON.parse(localStorage.getItem(PICKS_KEY) || "{}") || {}; }catch(e){ picks = {}; }
+function savePicks(){
+  try{ localStorage.setItem(PICKS_KEY, JSON.stringify(picks)); }catch(e){}
+}
+
+/* Build the resolved model. Two parallel views per node:
+     participantsAct / winnerAct — real results only (what actually happened)
+     participantsEff / winnerEff — real results, with MY picks filling the gaps
+   A stored pick only takes effect while its team is still a live effective
+   participant of that match; otherwise it is ignored (and scored as a miss
+   once the real result lands). */
+function buildModel(feed){
+  const memo = {};
+  function get(num){
+    if (memo[num]) return memo[num];
+    let pAct, pEff;
+    if (R32SET.has(num)){
+      const m = feed[num] || {};
+      pAct = [m.team1 || null, m.team2 || null];
+      pEff = pAct.slice();
+    } else {
+      const [a,b] = CHILDREN[num];
+      const A = get(a), B = get(b);
+      pAct = [A.winnerAct, B.winnerAct];
+      pEff = [A.winnerEff, B.winnerEff];
+    }
+    const m = feed[num] || {};
+    const idx = winnerIndex(m.score);
+    const winnerAct = (idx!=null && pAct[idx]) ? pAct[idx] : null;
+    const rawPick = picks[num] || null;
+    const pickValid = (rawPick && !winnerAct && pEff.includes(rawPick)) ? rawPick : null;
+    const winnerEff = winnerAct || pickValid;
+    return (memo[num] = {
+      participantsAct:pAct, participantsEff:pEff,
+      winnerAct, winnerEff, rawPick, pickValid,
+      score:m.score, label:scoreLabel(m.score),
+      date:m.date||"", time:m.time||""
+    });
+  }
+  const node = {};
+  for (const num of ALL_NUMS) node[num] = get(num);
+  return node;
+}
+
+/* ------------------------------ Rendering --------------------------------- */
+const stage = document.getElementById("stage");
+let prevWinners = {}; // num -> actual winner, for diff/pop animation
+let prevGhosts  = {}; // num -> picked team, ditto for pick ghosts
+let nowMs = Date.now();
+let lastFeed = null;  // last good normalized feed, so pick clicks re-render offline
+
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+// Parse the feed's "12:00 UTC-4" style venue-local time into a real UTC instant.
+function kickoffInstant(dateStr, timeStr){
+  const dm = (dateStr||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const tm = (timeStr||"").match(/^(\d{1,2}):(\d{2})(?:\s*UTC([+-])(\d{1,2})(?::(\d{2}))?)?/);
+  if (!dm || !tm) return null;
+  const sign = tm[3]==="-" ? -1 : 1;
+  const offMin = tm[3] ? sign*(+tm[4]*60 + (+tm[5]||0)) : 0;
+  const asUTC = Date.UTC(+dm[1], +dm[2]-1, +dm[3], +tm[1], +tm[2]);
+  const d = new Date(asUTC - offMin*60000);
+  return isNaN(d.getTime()) ? null : d;
+}
+function kickoff(node){ // -> e.g. "28 Jun · 12:00 PDT" in the viewer's own time zone
+  if (!node.date) return "Not played yet";
+  const d = kickoffInstant(node.date, node.time);
+  if (d){
+    const day = d.toLocaleDateString([], {day:"numeric", month:"short"});
+    const t = node.time
+      ? d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", timeZoneName:"short"})
+      : "";
+    return t ? `${day} · ${t}` : day;
+  }
+  const m = node.date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const day = m ? `${+m[3]} ${MONTHS[+m[2]-1]}` : node.date;
+  return node.time ? `${day} · ${node.time}` : day;
+}
+// Highlight windows: "live" from kickoff until LIVE_MS after; "soon" SOON_MS ahead.
+const LIVE_MS = 150*60000; // 2.5 h
+const SOON_MS = 120*60000; // 2 h
+// "live" | "soon" | "" — only for matches whose REAL participants are both set.
+function matchStatus(node, now){
+  if (!node || node.label) return "";
+  if (!node.participantsAct[0] || !node.participantsAct[1]) return "";
+  const d = kickoffInstant(node.date, node.time);
+  if (!d) return "";
+  const diff = d.getTime() - now;
+  if (diff <= 0) return now < d.getTime() + LIVE_MS ? "live" : "";
+  return diff <= SOON_MS ? "soon" : "";
+}
+// tooltip fields for a match node — real teams when known, my picks as "(my pick)"
+function tipFor(model, num){
+  const n = model[num];
+  const name = (i)=>{
+    if (n.participantsAct[i]) return n.participantsAct[i];
+    if (n.participantsEff[i]) return n.participantsEff[i]+" (my pick)";
+    return "TBD";
+  };
+  const teams = `${name(0)} vs ${name(1)}`;
+  let pick = "", pickmark = "";
+  if (n.rawPick){
+    pick = n.rawPick;
+    if (n.winnerAct) pickmark = (n.rawPick===n.winnerAct) ? "hit" : "miss";
+  }
+  return { round:roundName(num), teams, score:n.label, when:n.label?"":kickoff(n),
+           status:matchStatus(n, nowMs), pick, pickmark };
+}
+// leading-space CSS class for a tip's live/soon state (""/" live"/" soon")
+function hlClass(tip){ return tip.status ? " "+tip.status : ""; }
+
+function connectorPath(num){
+  const lvl = levelOf(num);
+  const Rc = RADIUS[lvl-1];
+  const Rp = RADIUS[lvl];
+  const [c1,c2] = R32SET.has(num)
+    ? [{ang:childFlagAngle(num,0)},{ang:childFlagAngle(num,1)}]
+    : [{ang:angleOf(CHILDREN[num][0])},{ang:angleOf(CHILDREN[num][1])}];
+  const ap = angleOf(num);
+  const A1 = pt(Rp, c1.ang), A2 = pt(Rp, c2.ang);
+  const C1 = pt(Rc, c1.ang), C2 = pt(Rc, c2.ang);
+  const P  = pt(Rp, ap);
+  const ctrl = [2*P[0] - 0.5*(A1[0]+A2[0]), 2*P[1] - 0.5*(A1[1]+A2[1])];
+  return `M${C1[0]} ${C1[1]} L${A1[0]} ${A1[1]} Q${ctrl[0]} ${ctrl[1]} ${A2[0]} ${A2[1]} L${C2[0]} ${C2[1]}`;
+}
+// angle of one of a R32 node's two outer flags (slot 0/1)
+function childFlagAngle(num, slot){
+  for (let i=0;i<FLAG_ORDER.length;i++){
+    if (FLAG_ORDER[i].num===num && FLAG_ORDER[i].slot===slot) return flagAngle(i);
+  }
+  return 0;
+}
+
+function trophySVG(){
+  return `<g transform="translate(${CX},${CY})" fill="var(--line)">
+    <path d="M-16,-26 h32 v8 a16,18 0 0 1 -32,0 z" />
+    <path d="M-22,-24 a8,8 0 0 0 8,8 v-4 a4,4 0 0 1 -4,-4 z" />
+    <path d="M22,-24 a8,8 0 0 1 -8,8 v-4 a4,4 0 0 0 4,-4 z" />
+    <rect x="-4" y="-6" width="8" height="12"/>
+    <rect x="-12" y="6" width="24" height="5" rx="2"/>
+    <rect x="-16" y="11" width="32" height="6" rx="2"/>
+  </g>`;
+}
+
+function render(model){
+  nowMs = Date.now();
+  const newWinners = {}, newGhosts = {};
+  const flags = []; // {x,y,team,cls,tip,next}
+
+  // Whether clicking a flag can set a pick: its next match exists and is undecided.
+  const pickableNext = (nextNum)=> nextNum!=null && model[nextNum] && !model[nextNum].winnerAct;
+
+  // 32 outer flags (always shown). Clicking one picks it to win its R32 match.
+  FLAG_ORDER.forEach((f,i)=>{
+    const team = model[f.num].participantsAct[f.slot] || "";
+    if (!team) return;
+    const [x,y] = pt(RADIUS[0], flagAngle(i));
+    const win = model[f.num].winnerAct;
+    const elim = win && win!==team;
+    const tip = tipFor(model,f.num);
+    let cls = "r0";
+    if (elim) cls += " eliminated";
+    else if (win===team) cls += " win";
+    if (pickableNext(f.num)){
+      cls += " pickable";
+      if (model[f.num].rawPick===team) cls += " mypick";
+    }
+    flags.push({x,y,team,cls:cls+hlClass(tip),tip,next:f.num});
+  });
+
+  // Connectors + dots / winner flags / pick ghosts for every match node
+  let conns = "";
+  let dots = "";
+  for (const num of ALL_NUMS){
+    const lvl = levelOf(num);
+    if (lvl<=4) conns += `<path class="conn" d="${connectorPath(num)}"/>`;
+    const ang = angleOf(num);
+    if (num===ROOT) continue; // final handled at center
+    const [x,y] = pt(RADIUS[lvl], ang);
+    const n = model[num];
+    const nextNum = PARENT[num];
+    if (n.winnerAct){
+      newWinners[num] = n.winnerAct;
+      const pop = (prevWinners[num]!==n.winnerAct) ? " pop" : "";
+      // Winner flag's tooltip describes where the team goes NEXT.
+      const tip = nextNum!=null ? tipFor(model,nextNum) : tipFor(model,num);
+      let cls = `r${lvl}${pop}`;
+      if (pickableNext(nextNum)){
+        cls += " pickable";
+        if (model[nextNum].rawPick===n.winnerAct) cls += " mypick";
+      }
+      flags.push({x,y,team:n.winnerAct,cls:cls+hlClass(tip),tip,next:nextNum});
+    } else if (n.pickValid){
+      // My predicted winner: dashed-gold ghost. Clicking advances it again.
+      newGhosts[num] = n.pickValid;
+      const pop = (prevGhosts[num]!==n.pickValid) ? " pop" : "";
+      const tip = nextNum!=null ? tipFor(model,nextNum) : tipFor(model,num);
+      let cls = `r${lvl} pick${pop}`;
+      if (pickableNext(nextNum)){
+        cls += " pickable";
+        if (model[nextNum].rawPick===n.pickValid) cls += " mypick";
+      }
+      flags.push({x,y,team:n.pickValid,cls,tip,next:nextNum});
+    } else {
+      dots += `<circle class="dot" cx="${x}" cy="${y}" r="3.4"/>`;
+    }
+  }
+
+  // Final / center
+  const finalNode = model[ROOT];
+  const sf1 = pt(RADIUS[4], angleOf(101)), sf2 = pt(RADIUS[4], angleOf(102));
+  let center = `<line class="center-line" x1="${CX}" y1="${CY}" x2="${sf1[0]}" y2="${sf1[1]}"/>
+                <line class="center-line" x1="${CX}" y1="${CY}" x2="${sf2[0]}" y2="${sf2[1]}"/>`;
+  let champFlag = null;
+  if (finalNode.winnerAct){
+    newWinners[ROOT] = finalNode.winnerAct;
+    const pop = (prevWinners[ROOT]!==finalNode.winnerAct) ? " pop" : "";
+    const t = tipFor(model,ROOT); t.round = "Champion";
+    champFlag = {x:CX,y:CY,team:finalNode.winnerAct,cls:`champ${pop}`,tip:t,next:null};
+  } else if (finalNode.pickValid){
+    newGhosts[ROOT] = finalNode.pickValid;
+    const pop = (prevGhosts[ROOT]!==finalNode.pickValid) ? " pop" : "";
+    const t = tipFor(model,ROOT); t.round = "My champion";
+    // Clicking my champion ghost clears the final pick (data-self, no next).
+    champFlag = {x:CX,y:CY,team:finalNode.pickValid,cls:`champ pick pickable${pop}`,tip:t,next:null,self:ROOT};
+  } else {
+    center += trophySVG();
+  }
+
+  // Assemble SVG (lines + dots + trophy) then the flag overlay
+  let html = `<svg viewBox="0 0 1000 1000" role="img">${conns}${center}${dots}</svg>`;
+  const allFlags = champFlag ? flags.concat([champFlag]) : flags;
+  for (const fl of allFlags){
+    const w = fl.cls.indexOf("champ")>=0 ? "w320" : "w160";
+    const src = flagURL(fl.team, w);
+    const left = (fl.x/1000*100).toFixed(3);
+    const top  = (fl.y/1000*100).toFixed(3);
+    const t = fl.tip || {round:"",teams:fl.team,score:"",when:"",pick:"",pickmark:""};
+    const data = `data-round="${escapeAttr(t.round)}" data-teams="${escapeAttr(t.teams)}" `+
+                 `data-score="${escapeAttr(t.score||"")}" data-when="${escapeAttr(t.when||"")}" `+
+                 `data-status="${escapeAttr(t.status||"")}" data-pick="${escapeAttr(t.pick||"")}" `+
+                 `data-pickmark="${escapeAttr(t.pickmark||"")}" data-team="${escapeAttr(fl.team)}" `+
+                 `data-next="${fl.next!=null?fl.next:""}" data-self="${fl.self!=null?fl.self:""}"`;
+    if (src){
+      html += `<img class="flag ${fl.cls}" src="${src}" alt="${escapeAttr(fl.team)}" ${data} loading="lazy"
+                 style="left:${left}%;top:${top}%" onerror="this.removeAttribute('src');this.style.background='#cfc9bd'"/>`;
+    } else {
+      html += `<div class="flag ${fl.cls}" ${data} style="left:${left}%;top:${top}%;background:#cfc9bd"></div>`;
+    }
+  }
+  stage.innerHTML = html;
+  prevWinners = newWinners;
+  prevGhosts = newGhosts;
+  updateTally(model);
+}
+
+/* My-picks scoreboard: ✓ where the real result matched my pick, ✗ where it
+   didn't, open = picked but not yet decided. */
+function updateTally(model){
+  let hit=0, miss=0, open=0;
+  for (const num of ALL_NUMS){
+    const n = model[num];
+    if (!n.rawPick) continue;
+    if (n.winnerAct) (n.rawPick===n.winnerAct ? hit++ : miss++);
+    else open++;
+  }
+  const el = document.getElementById("tally");
+  if (hit+miss+open === 0){
+    el.innerHTML = "No picks yet — click a flag to start your bracket";
+  } else {
+    el.innerHTML = `My picks: <span class="ok">${hit} ✓</span> · `+
+                   `<span class="bad">${miss} ✗</span> · `+
+                   `<span class="open">${open} open</span>`;
+  }
+}
+
+function roundName(num){
+  const l = levelOf(num);
+  return ["","Round of 32","Round of 16","Quarter-final","Semi-final","Final"][l];
+}
+function escapeAttr(s){ return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;"); }
+function escapeHTML(s){ return escapeAttr(s).replace(/>/g,"&gt;"); }
+
+/* ---- Custom tooltip: hover on desktop, tap on touch ---- */
+const tipEl = document.createElement("div");
+tipEl.className = "tooltip";
+document.body.appendChild(tipEl);
+
+function showTip(el){
+  const d = el.dataset;
+  if (!d || !d.teams) return;
+  let scoreHTML;
+  if (d.score){
+    scoreHTML = `<div class="tt-score">${escapeHTML(d.score)}</div>`;
+  } else if (d.status === "live"){
+    scoreHTML = `<div class="tt-score live"><span class="live-dot"></span>Live</div>`
+              + (d.when ? `<div class="tt-soon">Kicked off · ${escapeHTML(d.when)}</div>` : "");
+  } else {
+    scoreHTML = `<div class="tt-score pending">${escapeHTML(d.when || "Not played yet")}</div>`
+              + (d.status === "soon" ? `<div class="tt-soon">Starting soon</div>` : "");
+  }
+  let pickHTML = "";
+  if (d.pick){
+    const mark = d.pickmark==="hit" ? ` <span class="hit">✓</span>`
+               : d.pickmark==="miss" ? ` <span class="miss">✗</span>` : "";
+    pickHTML = `<div class="tt-pick">My pick: ${escapeHTML(d.pick)}${mark}</div>`;
+  }
+  tipEl.innerHTML =
+    (d.round ? `<div class="tt-round">${escapeHTML(d.round)}</div>` : "") +
+    `<div class="tt-teams">${escapeHTML(d.teams)}</div>` + scoreHTML + pickHTML;
+  const r = el.getBoundingClientRect();
+  const cx = Math.min(Math.max(r.left + r.width/2, 8), window.innerWidth - 8);
+  const flip = r.top < 110;
+  tipEl.classList.toggle("below", flip);
+  tipEl.style.left = cx + "px";
+  tipEl.style.top  = (flip ? r.bottom : r.top) + "px";
+  tipEl.classList.add("on");
+}
+function hideTip(){ tipEl.classList.remove("on"); }
+
+// hover (desktop)
+stage.addEventListener("pointerover", e=>{
+  const el = e.target.closest(".flag");
+  if (el && e.pointerType!=="touch") showTip(el);
+});
+stage.addEventListener("pointerout", e=>{
+  if (e.target.closest(".flag") && e.pointerType!=="touch") hideTip();
+});
+
+/* Click = set/clear a pick when possible; otherwise toggle the tooltip
+   (so finished matches still show their result on tap). */
+stage.addEventListener("click", e=>{
+  const el = e.target.closest(".flag");
+  if (!el) return;
+  e.stopPropagation();
+  const team = el.dataset.team;
+  const next = el.dataset.next !== "" ? +el.dataset.next : null;
+  const self = el.dataset.self !== "" ? +el.dataset.self : null;
+  let changed = false;
+  if (self!=null){                       // my champion ghost -> clear final pick
+    delete picks[self]; changed = true;
+  } else if (team && next!=null && lastFeed){
+    const model = buildModel(lastFeed);
+    if (!model[next].winnerAct){         // toggle my pick for the next match
+      if (picks[next]===team) delete picks[next];
+      else picks[next] = team;
+      changed = true;
+    }
+  }
+  if (changed && lastFeed){
+    savePicks();
+    hideTip();
+    render(buildModel(lastFeed));
+  } else {
+    tipEl.classList.contains("on") ? hideTip() : showTip(el);
+  }
+});
+document.addEventListener("click", ()=>hideTip());
+window.addEventListener("scroll", hideTip, {passive:true});
+
+document.getElementById("clearPicks").addEventListener("click", ()=>{
+  picks = {};
+  savePicks();
+  if (lastFeed) render(buildModel(lastFeed));
+});
+
+/* ------------------------------- Update loop ------------------------------ */
+const statusEl = document.getElementById("status");
+const dotEl = document.getElementById("statusDot");
+let lastGoodAt = null;
+
+function stamp(ok, msg){
+  dotEl.className = "status-dot " + (ok?"ok":"err");
+  const t = lastGoodAt ? lastGoodAt.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "—";
+  statusEl.textContent = (msg ? msg+" · " : "") + "updated " + t;
+}
+
+async function tick(){
+  try{
+    const raw = await fetchResults();
+    lastFeed = normalize(raw);
+    lastGoodAt = new Date();
+    render(buildModel(lastFeed));
+    stamp(true);
+  }catch(err){
+    // Never blank the bracket — keep last-good on screen, quiet retry
+    stamp(false, "offline, retrying");
+    console.warn("fetch failed:", err);
+  }
+}
+
+tick();
+setInterval(tick, POLL_MS);
+</script>
+</body>
+</html>
