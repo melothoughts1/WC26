@@ -219,7 +219,9 @@ const ISO = {
   "USA":"us","Bosnia & Herzegovina":"ba","Belgium":"be","Senegal":"sn",
   "Portugal":"pt","Croatia":"hr","Spain":"es","Austria":"at",
   "Switzerland":"ch","Algeria":"dz","Argentina":"ar","Cape Verde":"cv",
-  "Colombia":"co","Ghana":"gh","Australia":"au","Egypt":"eg"
+  "Colombia":"co","Ghana":"gh","Australia":"au","Egypt":"eg",
+  // group-stage-only teams that can appear on the Golden Boot leaderboard
+  "New Zealand":"nz"
 };
 /* Source spelling -> canonical name (ESPN and worldcup26.ir variants). */
 const ALIAS = {
@@ -365,23 +367,45 @@ async function fetchESPN(){
   return out;
 }
 
-/* Golden Boot: ESPN's own aggregated tournament leaders (full tournament, group
-   stage included) — no client-side tallying. CORS *, no key. goalsLeaders is
-   pre-sorted by ESPN; we keep their order. */
-const STATS_URL = "https://site.web.api.espn.com/apis/site/v2/sports/soccer/fifa.world/statistics?region=us&lang=en";
-let scorerList = []; // [{name, goals, team}] last-good, keyed for renderScorers()
+/* Golden Boot: tallied client-side from the FULL-tournament scoreboard (group
+   stage + knockout), because ESPN's aggregated statistics endpoint lags recent
+   matches by hours (it had Kane on 3 while he was actually on 5 — verified
+   against the live Golden Boot race 2026-07-02). Scoreboard details are
+   real-time. Two gotchas baked in:
+     - &limit=200: the scoreboard defaults to 100 events and silently truncates
+       the tournament (104 matches) — dropping the QFs onward.
+     - own goals and shootout conversions don't count toward the Golden Boot. */
+const SCORERS_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=20260611-20260719&limit=200";
+let scorerList = []; // [{name, goals, team}] last-good, read by renderScorers()
 
 async function fetchScorers(){
-  const res = await fetch(STATS_URL, {cache:"no-store"});
-  if (!res.ok) throw new Error("stats HTTP "+res.status);
+  const res = await fetch(SCORERS_URL, {cache:"no-store"});
+  if (!res.ok) throw new Error("scorers HTTP "+res.status);
   const data = await res.json();
-  const cat = (data.stats||[]).find(s=>s.name==="goalsLeaders");
-  if (!cat) throw new Error("no goalsLeaders category");
-  scorerList = (cat.leaders||[]).map(l=>({
-    name: (l.athlete && l.athlete.displayName) || "",
-    goals: Math.round(l.value||0),
-    team: canon(l.athlete && l.athlete.team && l.athlete.team.displayName)
-  })).filter(r=>r.name && r.goals>0);
+  const tally = {};
+  for (const ev of (data.events||[])){
+    const comp = (ev.competitions||[])[0];
+    if (!comp) continue;
+    // ESPN team id -> canonical team name, for crediting each goal to a flag
+    const teamById = {};
+    for (const c of (comp.competitors||[])){
+      const t = c.team || {};
+      if (t.id) teamById[t.id] = canon(t.displayName);
+    }
+    for (const det of (comp.details||[])){
+      if (!det.scoringPlay || det.shootout || det.ownGoal) continue;
+      const a = (det.athletesInvolved||[])[0];
+      if (!a || !a.displayName) continue;
+      const rec = tally[a.displayName] || (tally[a.displayName] = {goals:0, team:null});
+      rec.goals++;
+      const tid = a.team && a.team.id;
+      if (!rec.team && tid && teamById[tid]) rec.team = teamById[tid];
+    }
+  }
+  scorerList = Object.entries(tally)
+    .map(([name,v])=>({name, goals:v.goals, team:v.team}))
+    .filter(r=>r.goals>0)
+    .sort((a,b)=> b.goals-a.goals || a.name.localeCompare(b.name));
 }
 
 // strict numeric parse: the backup API sends "null"/"" strings for absent values
@@ -764,9 +788,11 @@ async function tick(){
     try{ lastBackupFeed = await fetchBackup(); }
     catch(err){ console.warn("backup fetch failed:", err); }
   }
-  // Golden Boot leaders: aggregate data, same relaxed cadence as the backup.
+  // Golden Boot leaders: relaxed cadence normally (the full-range payload is
+  // ~1 MB), but every tick while a match is live so goals land promptly.
   // Non-fatal — the card just keeps showing last-good numbers.
-  if (tickN===1 || tickN % BACKUP_EVERY === 0){
+  const liveNow = lastEspnFeed && Object.values(lastEspnFeed).some(r=>r.state==="in");
+  if (tickN===1 || tickN % BACKUP_EVERY === 0 || liveNow){
     try{ await fetchScorers(); }
     catch(err){ console.warn("scorers fetch failed:", err); }
   }
